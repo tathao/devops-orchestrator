@@ -1,0 +1,31 @@
+services:
+  vault:
+    image: hashicorp/vault:1.18
+    container_name: vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_ADDR: 'http://0.0.0.0:8200'
+      VAULT_API_ADDR: 'http://127.0.0.1:8200'
+      VAULT_SKIP_VERIFY: "true"
+    command: vault server -config=/vault/config/vault.hcl
+    volumes:
+      - ./config:/vault/config
+      - ./data:/vault/data
+      - ./logs:/vault/logs
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default_network
+
+networks:
+  default_network:
+    name: ${DOCKER_EXTERNAL_NETWORK}
+    external: true
+    

@@ -1,0 +1,28 @@
+pid_file="/tmp/pidfile"
+
+vault {
+    address = "http://host.docker.internal:8200"
+}
+
+auto_auth {
+    method "token" {
+        token = file("/var/run/secrets/vault_token")
+    }
+}
+
+sink "file" {
+    config = {
+        path = "/var/run/secrets/vault_token"
+    }
+}
+
+template {
+    source = "/vault/secrets/templates/root_password.ctmpl"
+    destination = "/vault/secrets/root_password"
+}
+
+template {
+    source = "/vault/secrets/templates/user_password.ctmpl"
+    destination = "/vault/secrets/user_password"
+}
+

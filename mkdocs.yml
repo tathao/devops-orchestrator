@@ -1,0 +1,40 @@
+site_name: DevOps Orchestrator CLI
+site_description: A production-ready private DevOps Orchestrator CLI for macOS
+site_author: Tathao Nguyen
+repo_url: https://github.com/tathao/devops-orchestrator
+site_url: https://tathao.github.io/devops-orchestrator/
+use_directory_urls: true
+
+theme:
+  name: material
+  palette:
+    primary: indigo
+    accent: amber
+  features:
+    - navigation.tabs
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Project Structure:
+          - Overview: structure.md
+          - Templates:
+              - MySQL Database: template/mysql.md
+      - Usage Guide: usage.md
+      - Vault Integration: vault.md
+      - Extending CLI: extend.md
+  - Author: author.md
+  - License: license.md
+
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables
+  - fenced_code
+  - admonition
+  - codehilite
+  - footnotes

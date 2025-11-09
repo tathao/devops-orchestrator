@@ -1,0 +1,17 @@
+{% macro vault_agent_service(container_name, vault_token) %}
+
+    vault-agent:
+        image: hashicorp/vault:1.18
+        container_name: {{ container_name }}-vault-agent
+        restart: unless-stopped
+        volumes:
+            - secrets:/vault/secrets
+            - ./vault-agent-config.hcl:/vault/agent/config.hcl
+            - ./templates:/vault/secrets/templates
+        environment:
+            VAULT_TOKEN: "{{ vault_token }}"
+        command: vault agent -config=/vault/agent/config.hcl
+        networks:
+            - default_network
+
+{% endmacro %}

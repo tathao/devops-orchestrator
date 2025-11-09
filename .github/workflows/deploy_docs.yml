@@ -1,0 +1,37 @@
+name: Deploy MkDocs
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # 2. Setup Python 3.11
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # 3. Install MkDocs + Material theme
+      - name: Install MkDocs
+        run: |
+          pip install mkdocs mkdocs-material
+
+      # 4. Configure Git user (cho commit của MkDocs)
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 5. Build và deploy MkDocs lên gh-pages
+      - name: Build and Deploy
+        run: |
+          mkdocs gh-deploy --force
+

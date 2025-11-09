@@ -1,0 +1,42 @@
+{% import "_vault_agent.j2" as shared %}
+
+services:
+    mysql:
+        image: mysql:8.0
+        container_name: {{ CONTAINER_NAME }}
+        restart: unless-stopped
+        environment:
+            MYSQL_ROOT_PASSWORD_FILE: /vault/secrets/root_password
+            MYSQL_DATABASE: "{{ MYSQL_DATABASE }}"
+            MYSQL_USER: "{{ MYSQL_USER }}"
+            MYSQL_PASSWORD_FILE: /vault/secrets/user_password
+        ports:
+            - "{{ MYSQL_PORT }}:3306"
+        volumes:
+            - ./data:/var/lib/mysql
+        networks:
+            - default_network
+        depends_on:
+            - vault-agent
+
+    phpmyadmin:
+        image: phpmyadmin/phpmyadmin:latest
+        container_name: {{ CONTAINER_NAME }}-phpmyadmin
+        restart: unless-stopped
+        environment:
+            PMA_HOST: mysql
+            PMA_PORT: 3306
+            PMA_ARBITRARY: 1
+        ports:
+            - "{{ PHPMYADMIN_PORT }}:80"
+        networks:
+            - default_network
+        depends_on:
+            - mysql
+
+{{ shared.vault_agent_service(CONTAINER_NAME, VAULT_TOKEN) }}
+
+networks:
+    default_network:
+        name: ${DOCKER_EXTERNAL_NETWORK}
+        external: true
