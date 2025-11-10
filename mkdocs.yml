@@ -26,6 +26,7 @@ nav:
       - Usage Guide: usage.md
       - Vault Integration: vault.md
       - Extending CLI: extend.md
+      - Containers: usage/containers.md
   - Author: author.md
   - License: license.md
 
