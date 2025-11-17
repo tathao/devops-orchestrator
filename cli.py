@@ -94,7 +94,7 @@ def create(
 ):
     mgrs = run_pre_flight_checks()
     try:
-        mgrs["service_manager"].create_service(template_name, new_service_name)
+        mgrs["service_creator"].create_service(template_name, new_service_name)
     except OrchestratorException as e:
         console.print(f"[bold red] Error creating service: {e} [/bold red]")
         raise typer.Exit(code=1)
