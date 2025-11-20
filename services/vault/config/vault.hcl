@@ -5,9 +5,11 @@ listener "tcp" {
 }
 
 storage "file" {
-    path = "vault/data"
+    path = "/vault/data"
 }
 
-api_addr = "http://127.0.0.1:8200"
+api_addr = "http://vault:8200"
+cluster_addr = "http://vault:8201"
 
 disable_mock = true
+disable_cache = false

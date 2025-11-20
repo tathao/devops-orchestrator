@@ -9,7 +9,7 @@ services:
       - "8200:8200"
     environment:
       VAULT_ADDR: 'http://0.0.0.0:8200'
-      VAULT_API_ADDR: 'http://127.0.0.1:8200'
+      VAULT_API_ADDR: 'http://vault:8200'
       VAULT_SKIP_VERIFY: "true"
     command: vault server -config=/vault/config/vault.hcl
     volumes:
@@ -17,10 +17,11 @@ services:
       - ./data:/vault/data
       - ./logs:/vault/logs
     healthcheck:
-      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      test: ["CMD", "vault", "status", "http://127.0.0.1:8200/v1/sys/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
     networks:
       - default_network
 

@@ -100,12 +100,27 @@ def create(
         raise typer.Exit(code=1)
     
 @app.command("vault-setup")
-def setup_vault():
+def setup_vault(role: str = typer.Option(..., "--role", "-r", help="The role to setup Vault for (e.g., 'mysql')"),
+                policy: str = typer.Option(..., "--policy", "-p", help="The policy name to create in Vault"),
+                save: str = typer.Option(..., "--save", "-s", help="Whether to save the generated credentials to a file")):
     mgrs = run_pre_flight_checks()
+    vault: VaultManager = mgrs["vault_manager"]
     try:
-        mgrs["vault_manager"].setup()
+        policies = [p.strip() for p in policy.split(",")]
+        console.print("[bold cyan]🚀 Starting Vault setup...[/bold cyan]")
+        creds = vault.full_setup_with_approle(
+            role_name=role,
+            policies=policies,
+            save_to=save
+        )
+        console.print("[bold green]✔ Vault setup completed successfully![/bold green]")
+        console.print("\n[cyan]AppRole Credentials:[/cyan]")
+        console.print(creds)
     except OrchestratorException as e:
         console.print(f"[bold red] Error during Vault setup: {e} [/bold red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[bold red]❌ Unexpected error during Vault setup: {e}[/bold red]")
         raise typer.Exit(code=1)
     
 
