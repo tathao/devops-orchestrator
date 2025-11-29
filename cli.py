@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing_extensions import Annotated
 
 import typer
@@ -101,17 +102,24 @@ def create(
     
 @app.command("vault-setup")
 def setup_vault(role: str = typer.Option(..., "--role", "-r", help="The role to setup Vault for (e.g., 'mysql')"),
-                policy: str = typer.Option(..., "--policy", "-p", help="The policy name to create in Vault"),
-                save: str = typer.Option(..., "--save", "-s", help="Whether to save the generated credentials to a file")):
+                policy: str = typer.Option(..., "--policy", "-p", help="The policy name to create in Vault")):
     mgrs = run_pre_flight_checks()
     vault: VaultManager = mgrs["vault_manager"]
     try:
         policies = [p.strip() for p in policy.split(",")]
+
+        # 💡 Force save path: always `.secrets/<role>.json`
+        secrets_dir = Path(".secrets")
+        role_secrets_dir = secrets_dir / role
+        role_secrets_dir.mkdir(parents=True, exist_ok=True)
+
+        save_path = role_secrets_dir / f"{role}.json"
+
         console.print("[bold cyan]🚀 Starting Vault setup...[/bold cyan]")
         creds = vault.full_setup_with_approle(
             role_name=role,
             policies=policies,
-            save_to=save
+            save_to=str(save_path)
         )
         console.print("[bold green]✔ Vault setup completed successfully![/bold green]")
         console.print("\n[cyan]AppRole Credentials:[/cyan]")

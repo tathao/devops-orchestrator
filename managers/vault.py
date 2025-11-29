@@ -146,15 +146,12 @@ class VaultManager:
             if "approle/" in auths:
                 console.print("[green]AppRole auth method already enabled.[/green]")
                 return
-            
-            self.client.sys.enable_auth_method(
-                method_type="approle",
-                path="approle"
-            )
+
+            self.client.sys.enable_auth_method(method_type="approle", path="approle")
             console.print("[green]Enabled AppRole auth method.[/green]")
         except Exception as e:
             raise VaultError(f"Failed to enable AppRole auth method: {e}")
-        
+
     def create_approle(self, role_name: str, policies: list[str], token_ttl="1h"):
         """
         Create an AppRole and attach policies.
@@ -166,12 +163,14 @@ class VaultManager:
             self.client.write(
                 f"auth/approle/role/{role_name}",
                 token_ttl=token_ttl,
-                policies=",".join(policies)
+                policies=",".join(policies),
             )
-            console.print(f"[green]AppRole '{role_name}' created with policies: {policies}[/green]")
+            console.print(
+                f"[green]AppRole '{role_name}' created with policies: {policies}[/green]"
+            )
         except Exception as e:
             raise VaultError(f"Failed to create AppRole '{role_name}': {e}")
-        
+
     def get_approle_credentials(self, role_name: str) -> dict:
         """
         Returns: {"role_id": "...", "secret_id": "..."}
@@ -183,18 +182,21 @@ class VaultManager:
             role_id = role_id_resp["data"]["role_id"]
 
             # Secret ID
-            secret_id_resp = self.client.write(f"auth/approle/role/{role_name}/secret-id")
+            secret_id_resp = self.client.write(
+                f"auth/approle/role/{role_name}/secret-id"
+            )
             secret_id = secret_id_resp["data"]["secret_id"]
 
-            console.print(f"[green]Generated RoleID & SecretID for AppRole '{role_name}'[/green]")
+            console.print(
+                f"[green]Generated RoleID & SecretID for AppRole '{role_name}'[/green]"
+            )
 
-            return {
-                "role_id": role_id,
-                "secret_id": secret_id
-            }
+            return {"role_id": role_id, "secret_id": secret_id}
         except Exception as e:
-            raise VaultError(f"Failed to get credentials for AppRole '{role_name}': {e}")
-        
+            raise VaultError(
+                f"Failed to get credentials for AppRole '{role_name}': {e}"
+            )
+
     def ensure_client_authenticated(self):
         """
         Ensures that self.client exists and is authenticated.
@@ -202,23 +204,24 @@ class VaultManager:
         """
         if self.client and self.client.is_authenticated():
             return
-        
+
         from utils.security import get_vault_token_from_keyring
-        
+
         try:
             token = get_vault_token_from_keyring()
         except Exception as exc:
             raise VaultError(f"Could not obtain Vault token from keyring: {exc}")
-        
-        self.client = hvac.Client(
-            url=setting.VAULT_ADDR,
-            token=token
-        )
+
+        self.client = hvac.Client(url=setting.VAULT_ADDR, token=token)
 
         if not self.client.is_authenticated():
-            raise VaultError("Vault client is not authenticated — token may be invalid or Vault may be sealed.")
-        
-    def setup_approle(self, role_name: str, policies: list[str], save_to: str | None = None) -> dict:
+            raise VaultError(
+                "Vault client is not authenticated — token may be invalid or Vault may be sealed."
+            )
+
+    def setup_approle(
+        self, role_name: str, policies: list[str], save_to: str | None = None
+    ) -> dict:
         """
         Full AppRole setup:
         Enable -> Create role -> Generate credentials -> Optionally save to file.
@@ -232,7 +235,7 @@ class VaultManager:
             with open(save_to, "w") as f:
                 json.dump(creds, f, indent=2)
             console.print(f"[green]Saved AppRole credentials to {save_to}[/green]")
-        
+
         console.print("[green]AppRole setup completed.[/green]")
         return creds
 
@@ -258,10 +261,7 @@ class VaultManager:
         self._print_summary(root_token)
 
     def full_setup_with_approle(
-        self,
-        role_name: str,
-        policies: list[str],
-        save_to: str | None = None
+        self, role_name: str, policies: list[str], save_to: str | None = None
     ):
         """
         Full Vault setup pipeline + AppRole setup.
@@ -273,11 +273,11 @@ class VaultManager:
         # 2) AppRole
         console.print("\n[bold magenta]== 8. Setting Up AppRole ==[/bold magenta]")
         creds = self.setup_approle(
-            role_name=role_name,
-            policies=policies,
-            save_to=save_to
+            role_name=role_name, policies=policies, save_to=save_to
         )
-        console.print("\n[bold green]Vault + AppRole setup completed successfully.[/bold green]")
+        console.print(
+            "\n[bold green]Vault + AppRole setup completed successfully.[/bold green]"
+        )
         return creds
 
     def _start_container(self, compose_dir: Optional[str] = None) -> None:
@@ -308,6 +308,52 @@ class VaultManager:
                 "Vault HTTP health endpoint did not become responsive in time"
             )
 
+    def _try_init_vault(self) -> Optional[dict]:
+        """
+        Attempts to run 'vault operator init'.
+        Returns parsed JSON on success, or None on failure.
+        """
+        cmd = [
+            "docker",
+            "exec",
+            self.container_name,
+            "sh",
+            "-c",
+            f"VAULT_ADDR={self.addr_container} vault operator init -key-shares=5 -key-threshold=3 -format=json",
+        ]
+
+        success, stdout, stderr = self.shell.run(cmd, exit_on_error=False)
+
+        if not success or not stdout.strip():
+            console.print(f"[red]Vault init attempt failed: {stderr}[/red]")
+            return None
+
+        try:
+            return json.loads(stdout)
+        except Exception as exc:
+            console.print(f"[red]Failed to parse Vault init JSON: {exc}[/red]")
+            return None
+
+    def _wait_for_init_ready(self, timeout=45) -> bool:
+        """
+        Wait until Vault health endpoint confirms:
+        - initialized == False
+        - sealed == True (or False)
+        """
+        console.print("[cyan]Waiting for Vault to be ready for initialization...[/cyan]")
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            ok, payload = self._http_health()
+            if ok and payload is not None:
+                if payload.get("initialized") is False:
+                    # Vault is ready to be initialized
+                    return True
+                
+            time.sleep(2)
+
+        return False
+
     def _initialize_or_load_keys(self) -> Dict:
         console.print(
             "\n[bold magenta]== Checking Vault initialization status ==[/bold magenta]"
@@ -324,46 +370,40 @@ class VaultManager:
                 )
             with open(self.keys_file, "r") as f:
                 return json.load(f)
+            
+        # Vault is NOT initialized → wait until init is allowed
+        if not self._wait_for_init_ready(timeout=45):
+            raise VaultError("Vault did not become ready for initialization in time.")
+        
+        console.print("[yellow]Vault is not initialized. Running init with retry...[/yellow]")
 
-        # Not initialized -> run container-local `vault operator init -format=json`
-        console.print("[yellow]Vault is not initialized. Running init...[/yellow]")
-        cmd = [
-            "docker",
-            "exec",
-            self.container_name,
-            "vault",
-            "operator",
-            "init",
-            "-key-shares=5",
-            "-key-threshold=3",
-            "-format=json",
-        ]
-        success, stdout, stderr = self.shell.run(cmd, exit_on_error=False)
-        if not success or not stdout:
-            raise VaultError(
-                f"Vault initialization failed: success={success} stderr={stderr}"
-            )
-        # Save keys securely
-        try:
-            parsed = json.loads(stdout)
-        except Exception as exc:
-            raise VaultError(f"Failed to parse vault init JSON: {exc}")
-        # write atomic file
-        self._write_keys_file_atomic(json.dumps(parsed, indent=2))
-        console.print(
-            f"[green]Vault initialized. Keys saved to {self.keys_file}[/green]"
-        )
+        # Retry init up to 5 times
+        for attempt in range(1, 6):
+            console.print(f"[cyan]→ Init attempt {attempt}/5[/cyan]")
+            result = self._try_init_vault()
+            if result:
+                # Save securely
+                self._write_keys_file_atomic(json.dumps(result, indent=2))
+                console.print(f"[green]Vault initialized successfully on attempt {attempt}[/green]")
+                return result
+            
+            sleep_time = min(2 * attempt, 6)  # exponential backoff
+            console.print(f"[yellow]Retrying init in {sleep_time}s...[/yellow]")
+            time.sleep(sleep_time)
 
-        return parsed
+        raise VaultError("Vault initialization failed after 5 attempts")
+
 
     def _unseal(self, key_data: Dict) -> None:
         console.print("\n[bold magenta]== Unsealing Vault ==[/bold magenta]")
-        # check sealed status via HTTP
+
+        # Skip if already unsealed
         ok, payload = self._http_health()
-        if ok and payload is not None and payload.get("sealed") is False:
+        if ok and payload and payload.get("sealed") is False:
             console.print("[green]Vault already unsealed[/green]")
             return
 
+        # Extract unseal keys
         unseal_keys = (
             key_data.get("unseal_keys_b64")
             or key_data.get("unseal_keys_hex")
@@ -372,46 +412,77 @@ class VaultManager:
         if not unseal_keys:
             raise VaultError("No unseal keys found in init data")
 
-        # Use first threshold keys (if keys are base64 encoded, Vault CLI accepts them)
-        threshold = (
-            int(key_data.get("key_threshold", 3)) if "key_threshold" in key_data else 3
-        )
+        threshold = int(key_data.get("key_threshold", 3))
         keys_to_use = unseal_keys[:threshold]
 
         console.print(
-            f"Using {len(keys_to_use)} keys to unseal (threshold={threshold})"
+            f"[cyan]Using {threshold} unseal keys (threshold={threshold})[/cyan]"
         )
 
-        # apply keys one by one, verifying progress after each
+        # Apply each key
         for idx, key in enumerate(keys_to_use, start=1):
-            console.print(f"Applying key {idx}/{len(keys_to_use)}")
-            cmd = [
-                "docker",
-                "exec",
-                self.container_name,
-                "vault",
-                "operator",
-                "unseal",
-                key,
-            ]
-            success, _, stderr = self.shell.run(cmd, exit_on_error=False)
-            if not success:
-                console.print(
-                    f"[red]Unseal command failed for key {idx}: {stderr}[/red]"
-                )
-                raise VaultError(f"Failed to run vault unseal command: {stderr}")
+            console.print(f"[yellow]→ Applying key {idx}/{threshold}[/yellow]")
 
-            # small backoff and check sealed status
-            time.sleep(0.5)
-            ok2, payload2 = self._http_health()
-            if ok2 and payload2 is not None and payload2.get("sealed") is False:
+            success, _, stderr = self._container_exec_vault(["operator", "unseal", key])
+            if not success:
+                raise VaultError(f"Vault unseal failed (key {idx}): {stderr}")
+
+            # Wait for state update (Vault is slow here)
+            if self._wait_until_unsealed(max_wait=20):
                 console.print("[green]Vault is now unsealed[/green]")
                 return
 
+            console.print("[blue]…Vault still sealed, applying next key…[/blue]")
+
         # final check
-        ok3, payload3 = self._http_health()
-        if not (ok3 and payload3 is not None and payload3.get("sealed") is False):
-            raise VaultError("Vault still sealed after applying unseal keys")
+        if not self._wait_until_unsealed(max_wait=10):
+            raise VaultError("Vault is still sealed after applying all unseal keys")
+
+        console.print("[green]Vault is now unsealed[/green]")
+
+    def _container_exec_vault(
+        self, vault_args: List[str], *, exit_on_error=False
+    ) -> Tuple[bool, str, str]:
+        """
+        Safe wrapper for running Vault CLI inside the container.
+        Ensures:
+        - VAULT_ADDR is set correctly
+        - Uses sh -c for reliable PATH resolution
+        - Full logging
+        """
+
+        # Compose the internal vault command
+        inner_cmd = (
+            f"VAULT_ADDR={self.addr_container} "
+            f"PATH=$PATH:/bin:/usr/bin:/usr/local/bin "
+            f"vault {' '.join(vault_args)}"
+        )
+
+        # The actual docker exec command
+        cmd = ["docker", "exec", self.container_name, "sh", "-c", inner_cmd]
+
+        console.print(f"[blue]→ Running in container:[/blue] {inner_cmd}")
+
+        return self.shell.run(cmd, exit_on_error=exit_on_error)
+
+    def _wait_until_unsealed(self, max_wait: int = 20) -> bool:
+        """
+        Poll Vault health endpoint until sealed == False.
+        Exponential backoff for up to max_wait seconds.
+        Returns True if Vault becomes unsealed, else False.
+        """
+        start = time.time()
+        delay = 1
+        while time.time() - start < max_wait:
+            ok, payload = self._http_health()
+            if ok and payload is not None:
+                if payload.get("sealed") is False:
+                    return True
+
+            time.sleep(delay)
+            delay = min(delay + 1, 5)
+
+        return False
 
     def _ensure_kv_v2(self) -> None:
         console.print(
@@ -450,18 +521,18 @@ class VaultManager:
         """Return an authenticated hvac client pulled from keyring if available, else raise."""
         if self.client and self.client.is_authenticated():
             return self.client
-        
+
         try:
             token = get_vault_token_from_keyring()
         except Exception as exc:
             raise VaultError(f"Could not obtain Vault token from keyring: {exc}")
-        
+
         client = hvac.Client(url=self.addr_host, token=token)
         if not client.is_authenticated():
             raise VaultError("Vault authentication failed with token from keyring")
         self.client = client
         return self.client
-    
+
     def _print_summary(self, root_token: str) -> None:
         console.print("\n[bold magenta]== Vault Setup Completed ==[/bold magenta]")
         console.print(f"Root Token: [bold]{root_token}[/bold]")
