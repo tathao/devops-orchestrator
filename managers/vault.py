@@ -43,6 +43,7 @@ from rich.status import Status
 
 # Project-specific imports (adjust if your layout differs)
 from config import setting
+from managers.enums.vault_state import VaultState
 from utils.shell import ShellRunner
 from managers.docker import DockerManager
 from utils.security import set_vault_token_in_keyring, get_vault_token_from_keyring
@@ -96,27 +97,7 @@ class VaultManager:
         self.client: Optional[hvac.Client] = None
 
     # ------------------ Helper utilities ------------------
-    def _http_health(self) -> Tuple[bool, Optional[Dict]]:
-        """Call the Vault HTTP health endpoint at /v1/sys/health.
-
-        Returns (ok, parsed_json_or_none).
-        ok True means the endpoint returned a recognizable health response (any of 200/429/472/473/501 still informative).
-        """
-        url = self.addr_host.rstrip("/") + "/v1/sys/health"
-        try:
-            resp = requests.get(url, timeout=2)
-        except Exception as exc:
-            return False, None
-
-        # Some responses are 200 (initialized/unsealed), 501 (not initialized), 429/472/473 (sealed / standby)
-        if resp.status_code in (200, 429, 472, 473, 501):
-            try:
-                payload = resp.json()
-            except Exception:
-                payload = None
-            return True, payload
-        return False, None
-
+    
     def _write_keys_file_atomic(self, data: str) -> None:
         # atomic write with secure permissions
         target = Path(self.keys_file)
@@ -298,8 +279,8 @@ class VaultManager:
         with Status("Pinging Vault HTTP health...") as status:
             while time.time() < deadline:
                 status.update("Pinging Vault HTTP health endpoint...")
-                ok, payload = self._http_health()
-                if ok and payload is not None:
+                state = self._get_vault_state()
+                if state != VaultState.DOWN:
                     # reachable: payload contains keys like 'initialized' and 'sealed'
                     console.print("[green]Vault HTTP endpoint responded[/green]")
                     return
@@ -344,11 +325,10 @@ class VaultManager:
         deadline = time.time() + timeout
 
         while time.time() < deadline:
-            ok, payload = self._http_health()
-            if ok and payload is not None:
-                if payload.get("initialized") is False:
+            state = self._get_vault_state()
+            if state == VaultState.NOT_INITIALIZED:
                     # Vault is ready to be initialized
-                    return True
+                return True
                 
             time.sleep(2)
 
@@ -359,11 +339,9 @@ class VaultManager:
             "\n[bold magenta]== Checking Vault initialization status ==[/bold magenta]"
         )
         # Prefer HTTP JSON via host
-        ok, payload = self._http_health()
-        if ok and payload is not None and payload.get("initialized") is True:
-            console.print(
-                "[green]Vault reports initialized. Loading keys from file.[/green]"
-            )
+        state = self._get_vault_state()
+        if state in (VaultState.UNSEALED, VaultState.SEALED, VaultState.STANDBY):
+            console.print("[green]Vault reports initialized. Loading keys from file.[/green]")
             if not self.keys_file.exists():
                 raise VaultError(
                     f"Vault is initialized but keys file '{self.keys_file}' is missing"
@@ -398,8 +376,8 @@ class VaultManager:
         console.print("\n[bold magenta]== Unsealing Vault ==[/bold magenta]")
 
         # Skip if already unsealed
-        ok, payload = self._http_health()
-        if ok and payload and payload.get("sealed") is False:
+        state = self._get_vault_state()
+        if state == VaultState.UNSEALED:
             console.print("[green]Vault already unsealed[/green]")
             return
 
@@ -474,11 +452,9 @@ class VaultManager:
         start = time.time()
         delay = 1
         while time.time() - start < max_wait:
-            ok, payload = self._http_health()
-            if ok and payload is not None:
-                if payload.get("sealed") is False:
-                    return True
-
+            if self._get_vault_state() == VaultState.UNSEALED:
+                return True
+            
             time.sleep(delay)
             delay = min(delay + 1, 5)
 
@@ -540,3 +516,45 @@ class VaultManager:
         console.print("For shell usage:")
         console.print(f" export VAULT_ADDR={self.addr_host}")
         console.print(f" export VAULT_TOKEN={root_token}")
+
+    @staticmethod
+    def parse_health_status(status: int, payload: dict | None) -> VaultState:
+        if payload is None:
+            return VaultState.DOWN
+        
+        if status == 501 and payload.get("initialized") is False:
+            return VaultState.NOT_INITIALIZED
+        
+        if payload.get("sealed") is True:
+            return VaultState.SEALED
+        
+        if status == 200 and payload.get("sealed") is False and payload.get("standby") is False:
+            return VaultState.UNSEALED
+        
+        if status in (429, 472, 473):
+            return VaultState.STANDBY
+        
+        return VaultState.DOWN
+    
+    def _http_health_full(self):
+        try:
+            resp = requests.get(
+            f"{self.addr_host}/v1/sys/health",
+            timeout=1.5,
+            verify=False
+        )
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = None
+            
+            return True, resp.status_code, payload
+        
+        except Exception:
+            return False, None, None
+    
+    def _get_vault_state(self) -> VaultState:
+        ok, status, payload = self._http_health_full()
+        if not ok:
+            return VaultState.DOWN
+        return self.parse_health_status(status, payload)
